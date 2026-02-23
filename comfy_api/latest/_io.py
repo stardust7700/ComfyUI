@@ -1252,6 +1252,32 @@ class Curve(ComfyTypeIO):
             return super().as_dict()
 
 
+@comfytype(io_type="COLOR_CURVES")
+class ColorCurves(ComfyTypeIO):
+    class ColorCurvesDict(TypedDict):
+        rgb: list[list[float]]
+        red: list[list[float]]
+        green: list[list[float]]
+        blue: list[list[float]]
+
+    Type = ColorCurvesDict
+
+    class Input(WidgetInput):
+        def __init__(self, id: str, display_name: str=None, optional=False, tooltip: str=None,
+                     socketless: bool=True, default: dict=None, advanced: bool=None):
+            super().__init__(id, display_name, optional, tooltip, None, default, socketless, None, None, None, None, advanced)
+            if default is None:
+                self.default = {
+                    "rgb": [[0, 0], [1, 1]],
+                    "red": [[0, 0], [1, 1]],
+                    "green": [[0, 0], [1, 1]],
+                    "blue": [[0, 0], [1, 1]]
+                }
+
+        def as_dict(self):
+            return super().as_dict()
+
+
 DYNAMIC_INPUT_LOOKUP: dict[str, Callable[[dict[str, Any], dict[str, Any], tuple[str, dict[str, Any]], str, list[str] | None], None]] = {}
 def register_dynamic_input_func(io_type: str, func: Callable[[dict[str, Any], dict[str, Any], tuple[str, dict[str, Any]], str, list[str] | None], None]):
     DYNAMIC_INPUT_LOOKUP[io_type] = func
@@ -2239,5 +2265,6 @@ __all__ = [
     "PriceBadge",
     "BoundingBox",
     "Curve",
+    "ColorCurves",
     "NodeReplace",
 ]
