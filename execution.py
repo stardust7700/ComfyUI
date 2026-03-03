@@ -686,19 +686,19 @@ class PromptExecutor:
 
     def _notify_prompt_lifecycle(self, event: str, prompt_id: str):
         """Notify external cache providers of prompt lifecycle events."""
-        from comfy_execution.cache_provider import has_cache_providers, get_cache_providers, logger
+        from comfy_execution.cache_provider import _has_cache_providers, _get_cache_providers, _logger
 
-        if not has_cache_providers():
+        if not _has_cache_providers():
             return
 
-        for provider in get_cache_providers():
+        for provider in _get_cache_providers():
             try:
                 if event == "start":
                     provider.on_prompt_start(prompt_id)
                 elif event == "end":
                     provider.on_prompt_end(prompt_id)
             except Exception as e:
-                logger.warning(f"Cache provider {provider.__class__.__name__} error on {event}: {e}")
+                _logger.warning(f"Cache provider {provider.__class__.__name__} error on {event}: {e}")
 
     def execute(self, prompt, prompt_id, extra_data={}, execute_outputs=[]):
         asyncio.run(self.execute_async(prompt, prompt_id, extra_data, execute_outputs))
