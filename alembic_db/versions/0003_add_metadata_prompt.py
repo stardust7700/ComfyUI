@@ -10,6 +10,8 @@ Create Date: 2026-03-09
 from alembic import op
 import sqlalchemy as sa
 
+from app.database.models import NAMING_CONVENTION
+
 revision = "0003_add_metadata_prompt"
 down_revision = "0002_merge_to_asset_references"
 branch_labels = None
@@ -29,7 +31,9 @@ def upgrade() -> None:
     # Existing values are asset-content IDs that won't match reference IDs,
     # so null them out first.
     op.execute("UPDATE asset_references SET preview_id = NULL WHERE preview_id IS NOT NULL")
-    with op.batch_alter_table("asset_references") as batch_op:
+    with op.batch_alter_table(
+        "asset_references", naming_convention=NAMING_CONVENTION
+    ) as batch_op:
         batch_op.drop_constraint(
             "fk_asset_references_preview_id_assets", type_="foreignkey"
         )
@@ -43,7 +47,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("asset_references") as batch_op:
+    with op.batch_alter_table(
+        "asset_references", naming_convention=NAMING_CONVENTION
+    ) as batch_op:
         batch_op.drop_constraint(
             "fk_asset_references_preview_id_asset_references", type_="foreignkey"
         )
