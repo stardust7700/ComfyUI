@@ -40,11 +40,11 @@ OpenGL.USE_ACCELERATE = False
 
 
 def _patch_find_library():
-    """On Windows, PyOpenGL's EGL platform looks for 'EGL' and 'GLESv2' by
-    name via ctypes.util.find_library, but ANGLE ships as 'libEGL' and
+    """PyOpenGL's EGL platform looks for 'EGL' and 'GLESv2' by short name
+    via ctypes.util.find_library, but ANGLE ships as 'libEGL' and
     'libGLESv2'.  Patch find_library to return the full ANGLE paths so
-    PyOpenGL loads the same DLLs we pre-loaded (same handle, no duplicates)."""
-    if sys.platform != "win32":
+    PyOpenGL loads the same libraries we pre-loaded."""
+    if sys.platform == "linux":
         return
     import ctypes.util
     _orig = ctypes.util.find_library
