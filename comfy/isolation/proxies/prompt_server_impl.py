@@ -8,7 +8,6 @@ Replaces the legacy PromptServerProxy (Singleton) with a clean Service/Stub arch
 
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import Any, Dict, Optional, Callable
 
