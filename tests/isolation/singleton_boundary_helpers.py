@@ -724,6 +724,7 @@ def capture_prompt_web_exact_relay() -> dict[str, object]:
     from comfy.isolation.proxies.web_directory_proxy import WebDirectoryCache
 
     PromptServerStub.set_rpc(fake_rpc)
+    PromptServerStub._pending_child_routes = []
     stub = PromptServerStub()
     cache = WebDirectoryCache()
     cache.register_proxy("demo_ext", FakeWebDirectoryProxy(fake_rpc.transcripts))
@@ -735,6 +736,7 @@ def capture_prompt_web_exact_relay() -> dict[str, object]:
 
     stub.send_progress_text("hello", "node-17")
     stub.routes.get("/demo")(demo_handler)
+    asyncio.run(PromptServerStub.flush_child_routes())
     web_file = cache.get_file("demo_ext", "js/app.js")
     imported = set(sys.modules) - before
     return {

@@ -885,4 +885,6 @@ class _InnerModelProxy:
             return lambda *a, **k: self._parent._call_rpc("scale_latent_inpaint", a, k)
         if name == "diffusion_model":
             return self._parent._call_rpc("get_inner_model_attr", "diffusion_model")
+        if name == "state_dict":
+            return lambda: self._parent.model_state_dict()
         raise AttributeError(f"'{name}' not supported on isolated InnerModel")

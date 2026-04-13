@@ -211,6 +211,7 @@ class ComfyNodeExtension(ExtensionBase):
 
         self.node_classes = getattr(module, "NODE_CLASS_MAPPINGS", {}) or {}
         self.display_names = getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", {}) or {}
+        self._register_module_routes(module)
 
         # Register web directory with WebDirectoryProxy (child-side)
         web_dir_attr = getattr(module, "WEB_DIRECTORY", None)
@@ -280,6 +281,55 @@ class ComfyNodeExtension(ExtensionBase):
 
         self.node_instances = {}
 
+    def _register_module_routes(self, module: Any) -> None:
+        """Bridge legacy module-level ROUTES declarations into isolated routing."""
+        routes = getattr(module, "ROUTES", None) or []
+        if not routes:
+            return
+
+        from comfy.isolation.proxies.prompt_server_impl import PromptServerStub
+
+        prompt_server = PromptServerStub()
+        route_table = getattr(prompt_server, "routes", None)
+        if route_table is None:
+            logger.warning("%s Route registration unavailable for %s", LOG_PREFIX, module)
+            return
+
+        for route_spec in routes:
+            if not isinstance(route_spec, dict):
+                logger.warning("%s Ignoring non-dict ROUTES entry: %r", LOG_PREFIX, route_spec)
+                continue
+
+            method = str(route_spec.get("method", "")).strip().upper()
+            path = str(route_spec.get("path", "")).strip()
+            handler_ref = route_spec.get("handler")
+            if not method or not path:
+                logger.warning("%s Ignoring incomplete route spec: %r", LOG_PREFIX, route_spec)
+                continue
+
+            if isinstance(handler_ref, str):
+                handler = getattr(module, handler_ref, None)
+            else:
+                handler = handler_ref
+            if not callable(handler):
+                logger.warning(
+                    "%s Ignoring route with missing handler %r for %s %s",
+                    LOG_PREFIX,
+                    handler_ref,
+                    method,
+                    path,
+                )
+                continue
+
+            decorator = getattr(route_table, method.lower(), None)
+            if not callable(decorator):
+                logger.warning("%s Unsupported route method %s for %s", LOG_PREFIX, method, path)
+                continue
+
+            decorator(path)(handler)
+            self._route_handlers[f"{method} {path}"] = handler
+            logger.info("%s buffered legacy route %s %s", LOG_PREFIX, method, path)
+
     async def list_nodes(self) -> Dict[str, str]:
         return {name: self.display_names.get(name, name) for name in self.node_classes}
 
@@ -289,10 +339,6 @@ class ComfyNodeExtension(ExtensionBase):
     async def get_node_details(self, node_name: str) -> Dict[str, Any]:
         node_cls = self._get_node_class(node_name)
         is_v3 = issubclass(node_cls, _ComfyNodeInternal)
-        logger.warning(
-            "%s DIAG:get_node_details START | node=%s | is_v3=%s | cls=%s",
-            LOG_PREFIX, node_name, is_v3, node_cls,
-        )
 
         input_types_raw = (
             node_cls.INPUT_TYPES() if hasattr(node_cls, "INPUT_TYPES") else {}
@@ -316,16 +362,7 @@ class ComfyNodeExtension(ExtensionBase):
 
         if is_v3:
             try:
-                logger.warning(
-                    "%s DIAG:get_node_details calling GET_SCHEMA for %s",
-                    LOG_PREFIX, node_name,
-                )
                 schema = node_cls.GET_SCHEMA()
-                logger.warning(
-                    "%s DIAG:get_node_details GET_SCHEMA returned for %s | schema_inputs=%s",
-                    LOG_PREFIX, node_name,
-                    [getattr(i, 'id', '?') for i in (schema.inputs or [])],
-                )
                 schema_v1 = asdict(schema.get_v1_info(node_cls))
                 try:
                     schema_v3 = asdict(schema.get_v3_info(node_cls))
@@ -531,6 +568,11 @@ class ComfyNodeExtension(ExtensionBase):
             result = (result,)
         wrapped = self._wrap_unpicklable_objects(result)
         return wrapped
+
+    async def flush_pending_routes(self) -> int:
+        """Flush buffered route registrations to host via RPC. Called by host after node discovery."""
+        from comfy.isolation.proxies.prompt_server_impl import PromptServerStub
+        return await PromptServerStub.flush_child_routes()
 
     async def flush_transport_state(self) -> int:
         if os.environ.get("PYISOLATE_CHILD") != "1":
@@ -750,19 +792,13 @@ class ComfyNodeExtension(ExtensionBase):
         return self.node_instances[node_name]
 
     async def before_module_loaded(self) -> None:
-        # Inject initialization here if we think this is the child
-        logger.warning(
-            "%s DIAG:before_module_loaded START | is_child=%s",
-            LOG_PREFIX, os.environ.get("PYISOLATE_CHILD"),
-        )
         try:
             from comfy.isolation import initialize_proxies
 
             initialize_proxies()
-            logger.warning("%s DIAG:before_module_loaded initialize_proxies OK", LOG_PREFIX)
         except Exception as e:
             logger.error(
-                "%s DIAG:before_module_loaded initialize_proxies FAILED: %s", LOG_PREFIX, e
+                "%s before_module_loaded initialize_proxies FAILED: %s", LOG_PREFIX, e
             )
 
         await super().before_module_loaded()

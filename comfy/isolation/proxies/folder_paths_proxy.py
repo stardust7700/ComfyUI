@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 import os
-import traceback
+
 from typing import Any, Dict, Optional
 
 from pyisolate import ProxiedSingleton
@@ -152,24 +152,9 @@ class FolderPathsProxy(ProxiedSingleton):
         return list(_folder_paths().get_folder_paths(folder_name))
 
     def get_filename_list(self, folder_name: str) -> list[str]:
-        caller_stack = "".join(traceback.format_stack()[-4:-1])
-        _fp_logger.warning(
-            "][ DIAG:FolderPathsProxy.get_filename_list called | folder=%s | is_child=%s | rpc_configured=%s\n%s",
-            folder_name, _is_child_process(), self._rpc is not None, caller_stack,
-        )
         if _is_child_process():
-            result = list(call_singleton_rpc(self._get_caller(), "rpc_get_filename_list", folder_name))
-            _fp_logger.warning(
-                "][ DIAG:FolderPathsProxy.get_filename_list RPC result | folder=%s | count=%d | first=%s",
-                folder_name, len(result), result[:3] if result else "EMPTY",
-            )
-            return result
-        result = list(_folder_paths().get_filename_list(folder_name))
-        _fp_logger.warning(
-            "][ DIAG:FolderPathsProxy.get_filename_list LOCAL result | folder=%s | count=%d | first=%s",
-            folder_name, len(result), result[:3] if result else "EMPTY",
-        )
-        return result
+            return list(call_singleton_rpc(self._get_caller(), "rpc_get_filename_list", folder_name))
+        return list(_folder_paths().get_filename_list(folder_name))
 
     def get_full_path(self, folder_name: str, filename: str) -> str | None:
         if _is_child_process():

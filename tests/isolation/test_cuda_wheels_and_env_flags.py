@@ -108,6 +108,119 @@ flash_attn = "flash-attn-special"
     }
 
 
+def test_load_isolated_node_passes_share_torch_no_deps(tmp_path, monkeypatch):
+    node_dir = tmp_path / "node"
+    node_dir.mkdir()
+    manifest_path = node_dir / "pyproject.toml"
+    _write_manifest(
+        node_dir,
+        """
+[project]
+name = "demo-node"
+dependencies = ["timm", "pyyaml"]
+
+[tool.comfy.isolation]
+can_isolate = true
+share_torch = true
+share_torch_no_deps = ["timm"]
+""".strip(),
+    )
+
+    captured: dict[str, object] = {}
+
+    class DummyManager:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def load_extension(self, config):
+            captured.update(config)
+            return _DummyExtension()
+
+    monkeypatch.setattr(extension_loader_module.pyisolate, "ExtensionManager", DummyManager)
+    monkeypatch.setattr(
+        extension_loader_module,
+        "load_host_policy",
+        lambda base_path: {
+            "sandbox_mode": "disabled",
+            "allow_network": False,
+            "writable_paths": [],
+            "readonly_paths": [],
+        },
+    )
+    monkeypatch.setattr(extension_loader_module, "is_cache_valid", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        extension_loader_module,
+        "load_from_cache",
+        lambda *args, **kwargs: {"Node": {"display_name": "Node", "schema_v1": {}}},
+    )
+    monkeypatch.setitem(sys.modules, "folder_paths", SimpleNamespace(base_path=str(tmp_path)))
+
+    specs = asyncio.run(
+        load_isolated_node(
+            node_dir,
+            manifest_path,
+            logging.getLogger("test"),
+            lambda *args, **kwargs: object,
+            tmp_path / "venvs",
+            [],
+        )
+    )
+
+    assert len(specs) == 1
+    assert captured["share_torch_no_deps"] == ["timm"]
+
+
+def test_on_module_loaded_registers_legacy_routes(monkeypatch):
+    captured: list[tuple[str, str, Any]] = []
+
+    def demo_handler(body):
+        return body
+
+    module = SimpleNamespace(
+        __file__="/tmp/demo_node/__init__.py",
+        __name__="demo_node",
+        NODE_CLASS_MAPPINGS={},
+        NODE_DISPLAY_NAME_MAPPINGS={},
+        ROUTES=[
+            {"method": "POST", "path": "/sam3/interactive_segment_one", "handler": "demo_handler"},
+        ],
+        demo_handler=demo_handler,
+    )
+
+    def fake_register_route(self, method, path, handler):
+        captured.append((method, path, handler))
+
+    monkeypatch.setattr(
+        "comfy.isolation.proxies.prompt_server_impl.PromptServerStub.register_route",
+        fake_register_route,
+    )
+
+    extension = ComfyNodeExtension()
+    asyncio.run(extension.on_module_loaded(module))
+
+    assert captured == [("POST", "/sam3/interactive_segment_one", demo_handler)]
+
+
+def test_prompt_server_stub_buffers_routes_without_rpc():
+    from comfy.isolation.proxies.prompt_server_impl import PromptServerStub
+
+    def demo_handler(body):
+        return body
+
+    old_rpc = PromptServerStub._rpc
+    old_pending = list(PromptServerStub._pending_child_routes)
+    try:
+        PromptServerStub._rpc = None
+        PromptServerStub._pending_child_routes = []
+        PromptServerStub().register_route("POST", "/sam3/interactive_segment_one", demo_handler)
+        assert PromptServerStub._pending_child_routes == [
+            ("POST", "/sam3/interactive_segment_one", demo_handler)
+        ]
+    finally:
+        PromptServerStub._rpc = old_rpc
+        PromptServerStub._pending_child_routes = old_pending
+
+
 def test_load_isolated_node_rejects_undeclared_cuda_wheel_dependency(
     tmp_path, monkeypatch
 ):
@@ -360,6 +473,70 @@ can_isolate = true
 
     assert captured["sandbox_mode"] == "disabled"
     assert "cuda_wheels" not in captured
+
+
+def test_load_isolated_node_passes_extra_index_urls(tmp_path, monkeypatch):
+    node_dir = tmp_path / "node"
+    node_dir.mkdir()
+    manifest_path = node_dir / "pyproject.toml"
+    _write_manifest(
+        node_dir,
+        """
+[project]
+name = "demo-node"
+dependencies = ["fbxsdkpy==2020.1.post2", "numpy>=1.0"]
+
+[tool.comfy.isolation]
+can_isolate = true
+share_torch = true
+extra_index_urls = ["https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple"]
+""".strip(),
+    )
+
+    captured: dict[str, object] = {}
+
+    class DummyManager:
+        def __init__(self, *args, **kwargs) -> None:
+            return None
+
+        def load_extension(self, config):
+            captured.update(config)
+            return _DummyExtension()
+
+    monkeypatch.setattr(extension_loader_module.pyisolate, "ExtensionManager", DummyManager)
+    monkeypatch.setattr(
+        extension_loader_module,
+        "load_host_policy",
+        lambda base_path: {
+            "sandbox_mode": "disabled",
+            "allow_network": False,
+            "writable_paths": [],
+            "readonly_paths": [],
+        },
+    )
+    monkeypatch.setattr(extension_loader_module, "is_cache_valid", lambda *args, **kwargs: True)
+    monkeypatch.setattr(
+        extension_loader_module,
+        "load_from_cache",
+        lambda *args, **kwargs: {"Node": {"display_name": "Node", "schema_v1": {}}},
+    )
+    monkeypatch.setitem(sys.modules, "folder_paths", SimpleNamespace(base_path=str(tmp_path)))
+
+    specs = asyncio.run(
+        load_isolated_node(
+            node_dir,
+            manifest_path,
+            logging.getLogger("test"),
+            lambda *args, **kwargs: object,
+            tmp_path / "venvs",
+            [],
+        )
+    )
+
+    assert len(specs) == 1
+    assert captured["extra_index_urls"] == [
+        "https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple"
+    ]
 
 
 def test_maybe_wrap_model_for_isolation_uses_runtime_flag(monkeypatch):

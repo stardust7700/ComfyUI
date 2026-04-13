@@ -354,6 +354,16 @@ async def load_isolated_node(
         "sandbox": sandbox_config,
     }
 
+    share_torch_no_deps = tool_config.get("share_torch_no_deps", [])
+    if share_torch_no_deps:
+        if not isinstance(share_torch_no_deps, list) or not all(
+            isinstance(dep, str) and dep.strip() for dep in share_torch_no_deps
+        ):
+            raise ExtensionLoadError(
+                "[tool.comfy.isolation.share_torch_no_deps] must be a list of non-empty strings"
+            )
+        extension_config["share_torch_no_deps"] = share_torch_no_deps
+
     _is_sealed = execution_model == "sealed_worker"
     _is_sandboxed = host_policy["sandbox_mode"] != "disabled" and is_linux
     logger.info(
@@ -366,6 +376,16 @@ async def load_isolated_node(
 
     if cuda_wheels is not None:
         extension_config["cuda_wheels"] = cuda_wheels
+
+    extra_index_urls = tool_config.get("extra_index_urls", [])
+    if extra_index_urls:
+        if not isinstance(extra_index_urls, list) or not all(
+            isinstance(u, str) and u.strip() for u in extra_index_urls
+        ):
+            raise ExtensionLoadError(
+                "[tool.comfy.isolation.extra_index_urls] must be a list of non-empty strings"
+            )
+        extension_config["extra_index_urls"] = extra_index_urls
 
     # Conda-specific keys
     if is_conda:
@@ -408,31 +428,17 @@ async def load_isolated_node(
     cache.register_proxy(extension_name, WebDirectoryProxy())
 
     # Try cache first (lazy spawn)
-    logger.warning("][ DIAG:ext_loader cache_valid_check for %s", extension_name)
     if is_cache_valid(node_dir, manifest_path, venv_root):
         cached_data = load_from_cache(node_dir, venv_root)
         if cached_data:
             if _is_stale_node_cache(cached_data):
-                logger.warning(
-                    "][ DIAG:ext_loader %s cache is stale/incompatible; rebuilding metadata",
-                    extension_name,
-                )
+                pass
             else:
-                logger.warning("][ DIAG:ext_loader %s USING CACHE — dumping combo options:", extension_name)
-                for node_name, details in cached_data.items():
-                    schema_v1 = details.get("schema_v1", {})
-                    inp = schema_v1.get("input", {}) if schema_v1 else {}
-                    for section_name, section in inp.items():
-                        if isinstance(section, dict):
-                            for field_name, field_def in section.items():
-                                if isinstance(field_def, (list, tuple)) and len(field_def) >= 2 and isinstance(field_def[1], dict) and "options" in field_def[1]:
-                                    opts = field_def[1]["options"]
-                                    logger.warning(
-                                        "][ DIAG:ext_loader CACHE %s.%s.%s options=%d first=%s",
-                                        node_name, section_name, field_name,
-                                        len(opts),
-                                        opts[:3] if opts else "EMPTY",
-                                    )
+                try:
+                    flushed = await extension.flush_pending_routes()
+                    logger.info("][ %s flushed %d routes", extension_name, flushed)
+                except Exception as exc:
+                    logger.warning("][ %s route flush failed: %s", extension_name, exc)
                 specs: List[Tuple[str, str, type]] = []
                 for node_name, details in cached_data.items():
                     stub_cls = build_stub_class(node_name, details, extension)
@@ -440,11 +446,7 @@ async def load_isolated_node(
                         (node_name, details.get("display_name", node_name), stub_cls)
                     )
                 return specs
-    else:
-        logger.warning("][ DIAG:ext_loader %s cache INVALID or MISSING", extension_name)
-
     # Cache miss - spawn process and get metadata
-    logger.warning("][ DIAG:ext_loader %s cache miss, spawning process for metadata", extension_name)
 
     try:
         remote_nodes: Dict[str, str] = await extension.list_nodes()
@@ -466,7 +468,6 @@ async def load_isolated_node(
     cache_data: Dict[str, Dict] = {}
 
     for node_name, display_name in remote_nodes.items():
-        logger.warning("][ DIAG:ext_loader calling get_node_details for %s.%s", extension_name, node_name)
         try:
             details = await extension.get_node_details(node_name)
         except Exception as exc:
@@ -477,20 +478,6 @@ async def load_isolated_node(
                 exc,
             )
             continue
-        # DIAG: dump combo options from freshly-fetched details
-        schema_v1 = details.get("schema_v1", {})
-        inp = schema_v1.get("input", {}) if schema_v1 else {}
-        for section_name, section in inp.items():
-            if isinstance(section, dict):
-                for field_name, field_def in section.items():
-                    if isinstance(field_def, (list, tuple)) and len(field_def) >= 2 and isinstance(field_def[1], dict) and "options" in field_def[1]:
-                        opts = field_def[1]["options"]
-                        logger.warning(
-                            "][ DIAG:ext_loader FRESH %s.%s.%s options=%d first=%s",
-                            node_name, section_name, field_name,
-                            len(opts),
-                            opts[:3] if opts else "EMPTY",
-                        )
         details["display_name"] = display_name
         cache_data[node_name] = details
         stub_cls = build_stub_class(node_name, details, extension)
@@ -511,6 +498,14 @@ async def load_isolated_node(
     # Re-check web directory AFTER child has populated it
     if host_policy["sandbox_mode"] == "disabled":
         _register_web_directory(extension_name, node_dir)
+
+    # Flush any routes the child buffered during module import — must happen
+    # before router freeze and before we kill the child process.
+    try:
+        flushed = await extension.flush_pending_routes()
+        logger.info("][ %s flushed %d routes", extension_name, flushed)
+    except Exception as exc:
+        logger.warning("][ %s route flush failed: %s", extension_name, exc)
 
     # EJECT: Kill process after getting metadata (will respawn on first execution)
     await _stop_extension_safe(extension, extension_name)

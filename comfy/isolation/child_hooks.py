@@ -31,7 +31,6 @@ def _load_extra_model_paths() -> None:
 
 
 def initialize_child_process() -> None:
-    logger.warning("][ DIAG:child_hooks initialize_child_process START")
     if os.environ.get("PYISOLATE_IMPORT_TORCH", "1") != "0":
         _load_extra_model_paths()
     _setup_child_loop_bridge()
@@ -41,15 +40,12 @@ def initialize_child_process() -> None:
         from pyisolate._internal.rpc_protocol import get_child_rpc_instance
 
         rpc = get_child_rpc_instance()
-        logger.warning("][ DIAG:child_hooks RPC instance: %s", rpc is not None)
         if rpc:
             _setup_proxy_callers(rpc)
-            logger.warning("][ DIAG:child_hooks proxy callers configured with RPC")
         else:
-            logger.warning("][ DIAG:child_hooks NO RPC — proxy callers cleared")
             _setup_proxy_callers()
     except Exception as e:
-        logger.error(f"][ DIAG:child_hooks Manual RPC Injection failed: {e}")
+        logger.error(f"][ child_hooks Manual RPC Injection failed: {e}")
         _setup_proxy_callers()
 
     _setup_logging()

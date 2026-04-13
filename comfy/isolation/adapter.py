@@ -5,7 +5,7 @@ import logging
 import os
 import inspect
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, cast
+from typing import Any, Dict, List, Optional, cast
 
 from pyisolate.interfaces import IsolationAdapter, SerializerRegistryProtocol  # type: ignore[import-untyped]
 from pyisolate._internal.rpc_protocol import AsyncRPC, ProxiedSingleton  # type: ignore[import-untyped]
@@ -586,29 +586,6 @@ class ComfyUIAdapter(IsolationAdapter):
 
         register_hooks_serializers(registry)
 
-        # Generic Numpy Serializer
-        def serialize_numpy(obj: Any) -> Any:
-            import torch
-
-            try:
-                # Attempt zero-copy conversion to Tensor
-                return torch.from_numpy(obj)
-            except Exception:
-                # Fallback for non-numeric arrays (strings, objects, mixes)
-                return obj.tolist()
-
-        def deserialize_numpy_b64(data: Any) -> Any:
-            """Deserialize base64-encoded ndarray from sealed worker."""
-            import base64
-            import numpy as np
-            if isinstance(data, dict) and "data" in data and "dtype" in data:
-                raw = base64.b64decode(data["data"])
-                arr = np.frombuffer(raw, dtype=np.dtype(data["dtype"])).reshape(data["shape"])
-                return torch.from_numpy(arr.copy())
-            return data
-
-        registry.register("ndarray", serialize_numpy, deserialize_numpy_b64)
-
         # -- File3D (comfy_api.latest._util.geometry_types) ---------------------
         # Origin: comfy_api by ComfyOrg (Alexander Piskun), PR #12129
 
@@ -873,93 +850,15 @@ class ComfyUIAdapter(IsolationAdapter):
 
             return
 
-        if api_name == "PromptServerProxy":
+        if api_name == "PromptServerService":
             if not _IMPORT_TORCH:
                 return
-            # Defer heavy import to child context
             import server
+            from comfy.isolation.proxies.prompt_server_impl import PromptServerStub
 
-            instance = api() if isinstance(api, type) else api
-            proxy = (
-                instance.instance
-            )  # PromptServerProxy instance has .instance property returning self
-
-            original_register_route = proxy.register_route
-
-            def register_route_wrapper(
-                method: str, path: str, handler: Callable[..., Any]
-            ) -> None:
-                callback_id = rpc.register_callback(handler)
-                loop = getattr(rpc, "loop", None)
-                if loop and loop.is_running():
-                    import asyncio
-
-                    asyncio.create_task(
-                        original_register_route(
-                            method, path, handler=callback_id, is_callback=True
-                        )
-                    )
-                else:
-                    original_register_route(
-                        method, path, handler=callback_id, is_callback=True
-                    )
-                return None
-
-            proxy.register_route = register_route_wrapper
-
-            class RouteTableDefProxy:
-                def __init__(self, proxy_instance: Any):
-                    self.proxy = proxy_instance
-
-                def get(
-                    self, path: str, **kwargs: Any
-                ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-                    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
-                        self.proxy.register_route("GET", path, handler)
-                        return handler
-
-                    return decorator
-
-                def post(
-                    self, path: str, **kwargs: Any
-                ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-                    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
-                        self.proxy.register_route("POST", path, handler)
-                        return handler
-
-                    return decorator
-
-                def patch(
-                    self, path: str, **kwargs: Any
-                ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-                    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
-                        self.proxy.register_route("PATCH", path, handler)
-                        return handler
-
-                    return decorator
-
-                def put(
-                    self, path: str, **kwargs: Any
-                ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-                    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
-                        self.proxy.register_route("PUT", path, handler)
-                        return handler
-
-                    return decorator
-
-                def delete(
-                    self, path: str, **kwargs: Any
-                ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-                    def decorator(handler: Callable[..., Any]) -> Callable[..., Any]:
-                        self.proxy.register_route("DELETE", path, handler)
-                        return handler
-
-                    return decorator
-
-            proxy.routes = RouteTableDefProxy(proxy)
-
+            stub = PromptServerStub()
             if (
                 hasattr(server, "PromptServer")
-                and getattr(server.PromptServer, "instance", None) != proxy
+                and getattr(server.PromptServer, "instance", None) is not stub
             ):
-                server.PromptServer.instance = proxy
+                server.PromptServer.instance = stub

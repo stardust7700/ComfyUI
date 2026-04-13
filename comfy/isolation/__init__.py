@@ -44,21 +44,15 @@ def initialize_proxies() -> None:
     from .child_hooks import is_child_process
 
     is_child = is_child_process()
-    logger.warning(
-        "%s DIAG:initialize_proxies | is_child=%s | PYISOLATE_CHILD=%s",
-        LOG_PREFIX, is_child, os.environ.get("PYISOLATE_CHILD"),
-    )
 
     if is_child:
         from .child_hooks import initialize_child_process
 
         initialize_child_process()
-        logger.warning("%s DIAG:initialize_proxies child_process initialized", LOG_PREFIX)
     else:
         from .host_hooks import initialize_host_process
 
         initialize_host_process()
-        logger.warning("%s DIAG:initialize_proxies host_process initialized", LOG_PREFIX)
         if start_shm_forensics is not None:
             start_shm_forensics()
 
