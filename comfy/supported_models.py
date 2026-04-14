@@ -27,6 +27,7 @@ import comfy.text_encoders.anima
 import comfy.text_encoders.ace15
 import comfy.text_encoders.longcat_image
 import comfy.text_encoders.ernie
+import comfy.text_encoders.cogvideo
 
 from . import supported_models_base
 from . import latent_formats
@@ -1862,11 +1863,7 @@ class CogVideoX_T2V(supported_models_base.BASE):
         return out
 
     def clip_target(self, state_dict={}):
-        class CogVideoXT5Tokenizer(comfy.text_encoders.sd3_clip.T5XXLTokenizer):
-            def __init__(self, embedding_directory=None, tokenizer_data={}):
-                super().__init__(embedding_directory=embedding_directory, tokenizer_data=tokenizer_data, min_length=226)
-
-        return supported_models_base.ClipTarget(CogVideoXT5Tokenizer, comfy.text_encoders.sd3_clip.T5XXLModel)
+        return supported_models_base.ClipTarget(comfy.text_encoders.cogvideo.CogVideoXT5Tokenizer, comfy.text_encoders.sd3_clip.T5XXLModel)
 
 class CogVideoX_I2V(CogVideoX_T2V):
     unet_config = {
