@@ -22,7 +22,7 @@ from ._helpers import (
     sleep_with_interrupt,
     to_aiohttp_url,
 )
-from .client import _diagnose_connectivity
+from .client import RETRY_DEFAULTS, _diagnose_connectivity
 from .common_exceptions import ApiServerError, LocalNetworkError, ProcessingInterrupted
 from .conversions import bytesio_to_image_tensor
 
@@ -34,9 +34,9 @@ async def download_url_to_bytesio(
     dest: BytesIO | IO[bytes] | str | Path | None,
     *,
     timeout: float | None = None,
-    max_retries: int = 5,
-    retry_delay: float = 1.0,
-    retry_backoff: float = 2.0,
+    max_retries: int = max(5, RETRY_DEFAULTS.max_retries),
+    retry_delay: float = RETRY_DEFAULTS.retry_delay,
+    retry_backoff: float = RETRY_DEFAULTS.retry_backoff,
     cls: type[COMFY_IO.ComfyNode] = None,
 ) -> None:
     """Stream-download a URL to `dest`.
@@ -53,7 +53,9 @@ async def download_url_to_bytesio(
         ProcessingInterrupted, LocalNetworkError, ApiServerError, Exception (HTTP and other errors)
     """
     if not isinstance(dest, (str, Path)) and not hasattr(dest, "write"):
-        raise ValueError("dest must be a path (str|Path) or a binary-writable object providing .write().")
+        raise ValueError(
+            "dest must be a path (str|Path) or a binary-writable object providing .write()."
+        )
 
     attempt = 0
     delay = retry_delay
@@ -62,7 +64,9 @@ async def download_url_to_bytesio(
     parsed_url = urlparse(url)
     if not parsed_url.scheme and not parsed_url.netloc:  # is URL relative?
         if cls is None:
-            raise ValueError("For relative 'cloud' paths, the `cls` parameter is required.")
+            raise ValueError(
+                "For relative 'cloud' paths, the `cls` parameter is required."
+            )
         url = urljoin(default_base_url().rstrip("/") + "/", url.lstrip("/"))
         headers = get_auth_header(cls)
 
@@ -80,7 +84,9 @@ async def download_url_to_bytesio(
 
         try:
             with contextlib.suppress(Exception):
-                request_logger.log_request_response(operation_id=op_id, request_method="GET", request_url=url)
+                request_logger.log_request_response(
+                    operation_id=op_id, request_method="GET", request_url=url
+                )
 
             session = aiohttp.ClientSession(timeout=timeout_cfg)
             stop_evt = asyncio.Event()
@@ -96,8 +102,12 @@ async def download_url_to_bytesio(
 
             monitor_task = asyncio.create_task(_monitor())
 
-            req_task = asyncio.create_task(session.get(to_aiohttp_url(url), headers=headers))
-            done, pending = await asyncio.wait({req_task, monitor_task}, return_when=asyncio.FIRST_COMPLETED)
+            req_task = asyncio.create_task(
+                session.get(to_aiohttp_url(url), headers=headers)
+            )
+            done, pending = await asyncio.wait(
+                {req_task, monitor_task}, return_when=asyncio.FIRST_COMPLETED
+            )
 
             if monitor_task in done and req_task in pending:
                 req_task.cancel()
@@ -117,7 +127,11 @@ async def download_url_to_bytesio(
                             body = await resp.json()
                         except (ContentTypeError, ValueError):
                             text = await resp.text()
-                            body = text if len(text) <= 4096 else f"[text {len(text)} bytes]"
+                            body = (
+                                text
+                                if len(text) <= 4096
+                                else f"[text {len(text)} bytes]"
+                            )
                         request_logger.log_request_response(
                             operation_id=op_id,
                             request_method="GET",
@@ -146,7 +160,9 @@ async def download_url_to_bytesio(
                 written = 0
                 while True:
                     try:
-                        chunk = await asyncio.wait_for(resp.content.read(1024 * 1024), timeout=1.0)
+                        chunk = await asyncio.wait_for(
+                            resp.content.read(1024 * 1024), timeout=1.0
+                        )
                     except asyncio.TimeoutError:
                         chunk = b""
                     except asyncio.CancelledError:
@@ -195,7 +211,9 @@ async def download_url_to_bytesio(
                 raise LocalNetworkError(
                     "Unable to connect to the network. Please check your internet connection and try again."
                 ) from e
-            raise ApiServerError("The remote service appears unreachable at this time.") from e
+            raise ApiServerError(
+                "The remote service appears unreachable at this time."
+            ) from e
         finally:
             if stop_evt is not None:
                 stop_evt.set()
@@ -237,7 +255,9 @@ async def download_url_to_video_output(
 ) -> InputImpl.VideoFromFile:
     """Downloads a video from a URL and returns a `VIDEO` output."""
     result = BytesIO()
-    await download_url_to_bytesio(video_url, result, timeout=timeout, max_retries=max_retries, cls=cls)
+    await download_url_to_bytesio(
+        video_url, result, timeout=timeout, max_retries=max_retries, cls=cls
+    )
     return InputImpl.VideoFromFile(result)
 
 
@@ -256,7 +276,11 @@ async def download_url_as_bytesio(
 def _generate_operation_id(method: str, url: str, attempt: int) -> str:
     try:
         parsed = urlparse(url)
-        slug = (parsed.path.rsplit("/", 1)[-1] or parsed.netloc or "download").strip("/").replace("/", "_")
+        slug = (
+            (parsed.path.rsplit("/", 1)[-1] or parsed.netloc or "download")
+            .strip("/")
+            .replace("/", "_")
+        )
     except Exception:
         slug = "download"
     return f"{method}_{slug}_try{attempt}_{uuid.uuid4().hex[:8]}"
